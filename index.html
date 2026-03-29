@@ -407,7 +407,7 @@ function buyMail() {
             db.ref("users/" + uid + "/balance").transaction(b => (b || 0) - currentPrice);
 
             beep();
-            alert(`✅ Mail purchased successfully! ₹${currentPrice} deducted.`);
+            //alert(`✅ Mail purchased successfully! ₹${currentPrice} deducted.`);
         });
     });
 }
@@ -445,7 +445,7 @@ db.ref("msg").on("child_added", snap => {
     // Copy Email
     row.querySelector(".copy").onclick = () => {
         navigator.clipboard.writeText(data.email);
-        alert("Email copied!");
+       // alert("Email copied!");
     };
 
     // Copy OTP
@@ -456,7 +456,7 @@ db.ref("msg").on("child_added", snap => {
             copyOtpBtn.textContent = "Copied!";
             setTimeout(() => copyOtpBtn.textContent = "Copy OTP", 2000);
         } else {
-            alert("OTP not received yet!");
+            //alert("OTP not received yet!");
         }
     };
 
