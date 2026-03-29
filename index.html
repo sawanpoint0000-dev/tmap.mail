@@ -71,7 +71,7 @@ button:hover { opacity: 0.92; transform: translateY(-1px); }
     align-items: center;
 }
 .row span { flex: 1 1 auto; font-size: 0.875rem; word-break: break-all; }
-.copy, .copy-otp {
+.copy, .copy-otp, .copy-pass {
     background: linear-gradient(135deg, var(--green), #15803d);
     color: black;
     width: auto;
@@ -82,7 +82,7 @@ button:hover { opacity: 0.92; transform: translateY(-1px); }
     border-radius: 0.375rem;
     cursor: pointer;
 }
-.copy-otp { min-width: 4.2rem; }
+.copy-otp, .copy-pass { min-width: 4.2rem; }
 .otp {
     width: 5.5rem;
     text-align: center;
@@ -188,18 +188,18 @@ button:hover { opacity: 0.92; transform: translateY(-1px); }
         <div style="margin:1.25rem 0; font-size:1.1rem;">
             Balance: ₹ <b id="bal">0</b>
         </div>
-        
+       
         <select id="userDomain">
             <option value="">-- Select Domain --</option>
         </select>
-        
+       
         <button id="buyBtn" style="margin-top:1rem; background:linear-gradient(135deg,var(--green),#15803d);" onclick="buyMail()">
             Buy Mail - ₹<span id="currentPrice">0</span>
         </button>
     </div>
 
     <div id="list" class="card">
-        <h3 style="margin-bottom:1rem;">📩 Your OTPs</h3>
+        <h3 style="margin-bottom:1rem;">📩 Your OTPs & Details</h3>
     </div>
 </div>
 
@@ -259,7 +259,7 @@ signupTab.onclick = () => {
 document.getElementById('go-to-signup').onclick = () => signupTab.click();
 document.getElementById('go-to-signin').onclick = () => signinTab.click();
 
-// Sign In
+// Sign In / Sign Up / Reset Password (same as before)
 document.getElementById('signin-form-el').addEventListener('submit', e => {
     e.preventDefault();
     const email = document.getElementById('signin-email').value.trim();
@@ -280,7 +280,6 @@ document.getElementById('signin-form-el').addEventListener('submit', e => {
     });
 });
 
-// Sign Up
 document.getElementById('signup-form-el').addEventListener('submit', e => {
     e.preventDefault();
     const email = document.getElementById('signup-email').value.trim();
@@ -293,18 +292,13 @@ document.getElementById('signup-form-el').addEventListener('submit', e => {
 
     const newUid = "u" + Date.now();
     db.ref("users/" + newUid).set({
-        email, 
-        pass, 
-        balance: 0, 
-        canBuy: true, 
-        blocked: false
+        email, pass, balance: 0, canBuy: true, blocked: false
     }).then(() => {
         localStorage.uid = newUid;
         location.reload();
     });
 });
 
-// Forgot Password
 document.getElementById('forgot-pass').onclick = () => {
     document.getElementById('reset-modal').classList.remove('hide');
 };
@@ -355,7 +349,6 @@ if (uid) {
 db.ref("domains").on("value", snap => {
     const select = document.getElementById("userDomain");
     select.innerHTML = '<option value="">-- Select Domain --</option>';
-
     snap.forEach(d => {
         const data = d.val();
         const stock = data.stock || 0;
@@ -366,7 +359,7 @@ db.ref("domains").on("value", snap => {
     });
 });
 
-// Update Buy Button Price Dynamically
+// Update Buy Button Price
 document.getElementById("userDomain").addEventListener("change", function() {
     const selectedOption = this.options[this.selectedIndex];
     if (selectedOption.value) {
@@ -377,7 +370,7 @@ document.getElementById("userDomain").addEventListener("change", function() {
     }
 });
 
-// Buy Mail Function (with dynamic price)
+// Buy Mail Function
 function buyMail() {
     const domainKey = document.getElementById("userDomain").value;
     if (!domainKey) return alert("Please select a domain");
@@ -401,15 +394,16 @@ function buyMail() {
             db.ref("mails/" + domainKey + "/" + mailKey).remove();
             db.ref("domains/" + domainKey + "/stock").transaction(n => (n || 0) - 1);
 
-            // Send to OTP section
+            // Send to user OTP section with password (if available)
             db.ref("msg").push({
                 email: mailData.email,
+                password: mailData.password || "",   // Password optional
                 user: uid,
                 time: Date.now(),
                 otp: ""
             });
 
-            // Deduct balance according to domain price
+            // Deduct balance
             db.ref("users/" + uid + "/balance").transaction(b => (b || 0) - currentPrice);
 
             beep();
@@ -418,7 +412,7 @@ function buyMail() {
     });
 }
 
-// Real-time OTP Listener
+// Real-time OTP + Password Listener (Updated)
 db.ref("msg").on("child_added", snap => {
     const data = snap.val();
     if (data.user !== uid) return;
@@ -430,23 +424,31 @@ db.ref("msg").on("child_added", snap => {
         <span>${data.email}</span>
         <input class="otp" disabled value="${data.otp || 'Waiting...'}">
         <button class="copy-otp">Copy OTP</button>
+        ${data.password ? `
+            <button class="copy-pass" style="background:#eab308;">Copy Pass</button>
+            <span style="font-size:0.8rem; color:#94a3b8; margin-left:8px;">Pass: ${data.password}</span>
+        ` : ''}
         <span class="time">10:00</span>
     `;
 
     const otpInput = row.querySelector(".otp");
     const copyOtpBtn = row.querySelector(".copy-otp");
+    const copyPassBtn = row.querySelector(".copy-pass");
 
+    // Real-time OTP update
     db.ref("msg/" + snap.key + "/otp").on("value", otpSnap => {
         const otpVal = otpSnap.val() || "";
         otpInput.value = otpVal || "Waiting...";
         if (otpVal) otpInput.classList.add("has-otp");
     });
 
+    // Copy Email
     row.querySelector(".copy").onclick = () => {
         navigator.clipboard.writeText(data.email);
         alert("Email copied!");
     };
 
+    // Copy OTP
     copyOtpBtn.onclick = () => {
         const otpVal = otpInput.value.trim();
         if (otpVal && otpVal !== "Waiting...") {
@@ -457,6 +459,17 @@ db.ref("msg").on("child_added", snap => {
             alert("OTP not received yet!");
         }
     };
+
+    // Copy Password (if exists)
+    if (copyPassBtn) {
+        copyPassBtn.onclick = () => {
+            if (data.password) {
+                navigator.clipboard.writeText(data.password);
+                copyPassBtn.textContent = "Copied!";
+                setTimeout(() => copyPassBtn.textContent = "Copy Pass", 2000);
+            }
+        };
+    }
 
     document.getElementById("list").prepend(row);
     startTimer(data.time, row.querySelector(".time"), snap.key);
