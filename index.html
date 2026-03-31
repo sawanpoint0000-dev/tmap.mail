@@ -52,13 +52,21 @@ button {
     min-height: 2.75rem;
 }
 button:hover { opacity: 0.92; transform: translateY(-1px); }
-.logout, .topup-btn {
+.logout, .topup-btn, .cancel-btn {
     width: auto;
     padding: 0.5rem 1rem;
     font-size: 0.875rem;
 }
 .logout { background: linear-gradient(135deg, var(--red), #991b1b); }
 .topup-btn { background: linear-gradient(135deg, var(--green), #15803d); }
+.cancel-btn { 
+    background: linear-gradient(135deg, #ef4444, #b91c1c); 
+    color: white;
+}
+.cancel-btn:disabled {
+    background: #475569;
+    cursor: not-allowed;
+}
 .hide { display: none !important; }
 .row {
     background: #0f172a;
@@ -113,7 +121,6 @@ button:hover { opacity: 0.92; transform: translateY(-1px); }
 .link { color: #60a5fa; cursor: pointer; text-decoration: underline; font-size: 0.875rem; }
 .mt-3 { margin-top: 0.75rem; }
 .text-center { text-align: center; }
-
 @media (max-width: 480px) {
     body { padding: 0.75rem; font-size: 0.95rem; }
     .card { padding: 1rem; border-radius: 0.875rem; }
@@ -176,7 +183,6 @@ button:hover { opacity: 0.92; transform: translateY(-1px); }
             <button class="logout" onclick="logout()">Logout</button>
         </div>
     </div>
-
     <div class="card" id="userBox">
         <div style="display:flex; gap:0.75rem; align-items:center;">
             <div class="avatar" id="avatar"></div>
@@ -188,16 +194,15 @@ button:hover { opacity: 0.92; transform: translateY(-1px); }
         <div style="margin:1.25rem 0; font-size:1.1rem;">
             Balance: ₹ <b id="bal">0</b>
         </div>
-       
+      
         <select id="userDomain">
             <option value="">-- Select Domain --</option>
         </select>
-       
+      
         <button id="buyBtn" style="margin-top:1rem; background:linear-gradient(135deg,var(--green),#15803d);" onclick="buyMail()">
             Buy Mail - ₹<span id="currentPrice">0</span>
         </button>
     </div>
-
     <div id="list" class="card">
         <h3 style="margin-bottom:1rem;">📩 Your OTPs & Details</h3>
     </div>
@@ -225,6 +230,8 @@ firebase.initializeApp({
 });
 const db = firebase.database();
 const EXPIRE = 600000;
+const CANCEL_DELAY = 120000; // 2 minutes
+
 let uid = "";
 let currentPrice = 0;
 
@@ -242,7 +249,7 @@ function openWhatsAppTopup() {
     window.open(url, '_blank');
 }
 
-// Tab Switching
+// Tab Switching, Sign In, Sign Up, Reset Password (aapka original)
 const signinTab = document.getElementById('signin-tab');
 const signupTab = document.getElementById('signup-tab');
 const signinForm = document.getElementById('signin-form');
@@ -259,13 +266,11 @@ signupTab.onclick = () => {
 document.getElementById('go-to-signup').onclick = () => signupTab.click();
 document.getElementById('go-to-signin').onclick = () => signinTab.click();
 
-// Sign In / Sign Up / Reset Password (same as before)
 document.getElementById('signin-form-el').addEventListener('submit', e => {
     e.preventDefault();
     const email = document.getElementById('signin-email').value.trim();
     const pass = document.getElementById('signin-pass').value;
     if (!email || !pass) return alert("Email and Password required");
-
     db.ref("users").once("value", snap => {
         let found = false;
         snap.forEach(child => {
@@ -285,11 +290,9 @@ document.getElementById('signup-form-el').addEventListener('submit', e => {
     const email = document.getElementById('signup-email').value.trim();
     const pass = document.getElementById('signup-pass').value;
     const confirm = document.getElementById('signup-confirm').value;
-
     if (!email.includes('@')) return document.getElementById('signup-email-error').style.display = 'block';
     if (pass.length < 6) return document.getElementById('signup-pass-error').style.display = 'block';
     if (pass !== confirm) return document.getElementById('signup-confirm-error').style.display = 'block';
-
     const newUid = "u" + Date.now();
     db.ref("users/" + newUid).set({
         email, pass, balance: 0, canBuy: true, blocked: false
@@ -307,7 +310,6 @@ function handleReset() {
     const email = document.getElementById('reset-email').value.trim();
     const newPass = document.getElementById('new-pass').value;
     if (!email || newPass.length < 6) return alert("Valid email and new password (min 6 chars) required");
-
     db.ref("users").once("value", snap => {
         let foundKey = null;
         snap.forEach(child => {
@@ -334,7 +336,6 @@ uid = localStorage.uid || "";
 if (uid) {
     document.getElementById("auth").classList.add("hide");
     document.getElementById("app").classList.remove("hide");
-
     db.ref("users/" + uid).on("value", snap => {
         if (!snap.exists()) return logout();
         const u = snap.val();
@@ -370,7 +371,7 @@ document.getElementById("userDomain").addEventListener("change", function() {
     }
 });
 
-// Buy Mail Function
+// Buy Mail
 function buyMail() {
     const domainKey = document.getElementById("userDomain").value;
     if (!domainKey) return alert("Please select a domain");
@@ -385,40 +386,41 @@ function buyMail() {
             if (!mailSnap.exists()) return alert("No mails available in this domain right now");
 
             let mailKey, mailData;
-            mailSnap.forEach(m => { 
-                mailKey = m.key; 
-                mailData = m.val(); 
+            mailSnap.forEach(m => {
+                mailKey = m.key;
+                mailData = m.val();
             });
 
-            // Remove mail from stock
-            db.ref("mails/" + domainKey + "/" + mailKey).remove();
-            db.ref("domains/" + domainKey + "/stock").transaction(n => (n || 0) - 1);
-
-            // Send to user OTP section with password (if available)
             db.ref("msg").push({
                 email: mailData.email,
-                password: mailData.password || "",   // Password optional
+                password: mailData.password || "",
                 user: uid,
                 time: Date.now(),
-                otp: ""
+                otp: "",
+                domainKey: domainKey,
+                mailKey: mailKey,
+                price: currentPrice,
+                canCancel: true
             });
 
-            // Deduct balance
+            db.ref("mails/" + domainKey + "/" + mailKey).remove();
+            db.ref("domains/" + domainKey + "/stock").transaction(n => (n || 0) - 1);
             db.ref("users/" + uid + "/balance").transaction(b => (b || 0) - currentPrice);
 
             beep();
-            //alert(`✅ Mail purchased successfully! ₹${currentPrice} deducted.`);
         });
     });
 }
 
-// Real-time OTP + Password Listener (Updated)
+// Real-time Messages with Cancel Button
 db.ref("msg").on("child_added", snap => {
     const data = snap.val();
     if (data.user !== uid) return;
 
     const row = document.createElement("div");
     row.className = "row";
+    row.dataset.msgKey = snap.key;
+
     row.innerHTML = `
         <button class="copy">Copy Email</button>
         <span>${data.email}</span>
@@ -428,46 +430,38 @@ db.ref("msg").on("child_added", snap => {
             <button class="copy-pass" style="background:#eab308;">Copy Pass</button>
             <span style="font-size:0.8rem; color:#94a3b8; margin-left:8px;">Pass: ${data.password}</span>
         ` : ''}
+        <button class="cancel-btn" id="cancel-${snap.key}" disabled>Cancel</button>
         <span class="time">10:00</span>
     `;
 
-    const otpInput = row.querySelector(".otp");
-    const copyOtpBtn = row.querySelector(".copy-otp");
-    const copyPassBtn = row.querySelector(".copy-pass");
+    const cancelBtn = row.querySelector(`#cancel-${snap.key}`);
 
-    // Real-time OTP update
+    // 2 minute baad Cancel button active
+    setTimeout(() => {
+        if (cancelBtn && data.canCancel) {
+            cancelBtn.disabled = false;
+            cancelBtn.onclick = () => cancelPurchase(snap.key, data, row);
+        }
+    }, CANCEL_DELAY);
+
+    // OTP aate hi pura row remove
     db.ref("msg/" + snap.key + "/otp").on("value", otpSnap => {
         const otpVal = otpSnap.val() || "";
-        otpInput.value = otpVal || "Waiting...";
-        if (otpVal) otpInput.classList.add("has-otp");
+        row.querySelector(".otp").value = otpVal || "Waiting...";
+        if (otpVal) {
+            row.remove();   // OTP aate hi pura box hat jaye
+        }
     });
 
-    // Copy Email
-    row.querySelector(".copy").onclick = () => {
-        navigator.clipboard.writeText(data.email);
-       // alert("Email copied!");
+    // Copy functions
+    row.querySelector(".copy").onclick = () => navigator.clipboard.writeText(data.email);
+    row.querySelector(".copy-otp").onclick = () => {
+        const val = row.querySelector(".otp").value.trim();
+        if (val && val !== "Waiting...") navigator.clipboard.writeText(val);
     };
-
-    // Copy OTP
-    copyOtpBtn.onclick = () => {
-        const otpVal = otpInput.value.trim();
-        if (otpVal && otpVal !== "Waiting...") {
-            navigator.clipboard.writeText(otpVal);
-            copyOtpBtn.textContent = "Copied!";
-            setTimeout(() => copyOtpBtn.textContent = "Copy OTP", 2000);
-        } else {
-            //alert("OTP not received yet!");
-        }
-    };
-
-    // Copy Password (if exists)
-    if (copyPassBtn) {
-        copyPassBtn.onclick = () => {
-            if (data.password) {
-                navigator.clipboard.writeText(data.password);
-                copyPassBtn.textContent = "Copied!";
-                setTimeout(() => copyPassBtn.textContent = "Copy Pass", 2000);
-            }
+    if (row.querySelector(".copy-pass")) {
+        row.querySelector(".copy-pass").onclick = () => {
+            if (data.password) navigator.clipboard.writeText(data.password);
         };
     }
 
@@ -475,17 +469,40 @@ db.ref("msg").on("child_added", snap => {
     startTimer(data.time, row.querySelector(".time"), snap.key);
 });
 
+// Cancel Function
+function cancelPurchase(msgKey, data, rowElement) {
+    if (!data.domainKey || !data.mailKey) return;
+
+    // Paisa wapas
+    db.ref("users/" + uid + "/balance").transaction(b => (b || 0) + (data.price || 0));
+
+    // Mail wapas stock mein
+    db.ref("mails/" + data.domainKey + "/" + data.mailKey).set({
+        email: data.email,
+        password: data.password || "",
+        no: Date.now()
+    });
+    db.ref("domains/" + data.domainKey + "/stock").transaction(n => (n || 0) + 1);
+
+    // Pura row remove
+    if (rowElement) rowElement.remove();
+
+    // Msg delete
+    db.ref("msg/" + msgKey).remove();
+}
+
+// Timer
 function startTimer(startTime, el, msgKey) {
     const interval = setInterval(() => {
         const left = EXPIRE - (Date.now() - startTime);
         if (left <= 0) {
             clearInterval(interval);
             db.ref("msg/" + msgKey).remove();
-            el.innerText = "Expired";
+            if (el) el.innerText = "Expired";
         } else {
             const min = Math.floor(left / 60000);
             const sec = Math.floor((left % 60000) / 1000);
-            el.innerText = `${min.toString().padStart(2,'0')}:${sec.toString().padStart(2,'0')}`;
+            if (el) el.innerText = `${min.toString().padStart(2,'0')}:${sec.toString().padStart(2,'0')}`;
         }
     }, 1000);
 }
